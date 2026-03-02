@@ -1,0 +1,19 @@
+# F5TTS_v1_Base | E2TTS_Base
+model = "F5TTS_v1_Base"
+model_cfg = "F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/src/f5_tts/configs/F5TTS_v1_Base.yaml"
+# 微调后的模型: ckpts/child-tts_processed/model_last.pt
+# 预训练模型:    ckpts/child-tts/pretrained_model_1250000.safetensors
+ckpt_file = "F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/ckpts/child-tts_processed/model_last.pt"
+vocab_file = "F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/ckpts/child-tts/vocab.txt"
+ref_audio = "F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/data/child-tts/000018.wav"
+# If an empty "", transcribes the reference audio automatically.
+ref_text = "这里有好多游乐场可好玩了"
+gen_text = "今天天气真好，小朋友们出去玩吧。"
+# File with text to generate. Ignores the text above.
+gen_file = ""
+remove_silence = false
+output_dir = "F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/test_outputs"
+output_file = "infer_cli_basic.wav"
+# NFE=50, CFG=2.0 是最优组合（经过实验验证）
+nfe_step = 50
+cfg_strength = 2.0
