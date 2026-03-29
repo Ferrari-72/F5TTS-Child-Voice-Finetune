@@ -1,10 +1,39 @@
 line-length = 120
 target-version = "py310"
+extend-exclude = [
+    "*.ipynb",
+    "audio_player.py",
+    "generate_samples.py",
+    "hparam_search.py",
+    "inspect_notebook.py",
+    "quick_inference.py",
+    "speechscore/**",
+    "src/f5_tts/**",
+]
 
 [lint]
 # Only ignore variables with names starting with "_".
 dummy-variable-rgx = "^_.*$"
 
+[lint.per-file-ignores]
+"*.ipynb" = ["E402", "E702", "F401"]
+"hparam_search.py" = ["F841"]
+"src/f5_tts/train/finetune_cli.py" = ["F841"]
+"speechscore/__init__.py" = ["E402", "F401"]
+"speechscore/basis.py" = ["F821", "F841"]
+"speechscore/scores/dnsmos/dnsmos.py" = ["E402", "F841"]
+"speechscore/scores/fwsegsnr.py" = ["F841"]
+"speechscore/scores/helper.py" = ["F841"]
+"speechscore/scores/mcd.py" = ["E741"]
+"speechscore/scores/snr.py" = ["F841"]
+"speechscore/scores/srmr/cal_srmr.py" = ["F821"]
+"speechscore/scores/srmr/segmentaxis.py" = ["E741"]
+"speechscore/scores/ssnr.py" = ["F841"]
+"speechscore/speechscore.py" = ["E701"]
+
 [lint.isort]
 force-single-line = true
 lines-after-imports = 2
+
+[format]
+exclude = ["*.ipynb", "speechscore/**", "src/f5_tts/**"]

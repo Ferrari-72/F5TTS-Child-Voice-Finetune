@@ -9,11 +9,13 @@ Install dependencies for evaluation
 import subprocess
 import sys
 import io
+import importlib.util
 
 # 修复Windows控制台编码问题
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8")
+
 
 def install_package(package):
     """安装单个包"""
@@ -25,12 +27,13 @@ def install_package(package):
         print(f"[FAIL] {package} 安装失败: {e}")
         return False
 
+
 def main():
     """安装所有必需的依赖"""
     print("=" * 60)
     print("安装评估依赖包")
     print("=" * 60)
-    
+
     # 必需的包
     packages = [
         "pesq==0.0.4",
@@ -41,28 +44,27 @@ def main():
         "resampy",
         "numpy",
     ]
-    
+
     success_count = 0
     for package in packages:
         if install_package(package):
             success_count += 1
-    
+
     print("-" * 60)
     print(f"安装完成: {success_count}/{len(packages)}")
-    
+
     # 验证安装
     print("\n验证安装...")
-    try:
-        import pesq
+    if importlib.util.find_spec("pesq") is not None:
         print("[OK] pesq 可用")
-    except ImportError:
+    else:
         print("[FAIL] pesq 不可用，可能需要重新安装")
-    
-    try:
-        import pystoi
+
+    if importlib.util.find_spec("pystoi") is not None:
         print("[OK] pystoi 可用")
-    except ImportError:
+    else:
         print("[FAIL] pystoi 不可用，可能需要重新安装")
+
 
 if __name__ == "__main__":
     main()
