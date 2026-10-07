@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>F5-TTS Child Voice Cloning — Demo</title>
+<style>
+  :root { --accent: #2563eb; --bg: #f8fafc; --card: #ffffff; --text: #1e293b; --muted: #64748b; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", "Noto Sans SC", sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 2rem 1rem; }
+  .container { max-width: 960px; margin: 0 auto; }
+  header { text-align: center; margin-bottom: 2rem; }
+  h1 { font-size: 1.8rem; margin: 0 0 .5rem; }
+  .sub { color: var(--muted); font-size: .95rem; }
+  .sub a { color: var(--accent); text-decoration: none; }
+  .card { background: var(--card); border-radius: 12px; box-shadow: 0 1px 3px rgba(0,0,0,.08); padding: 1.25rem 1.5rem; margin-bottom: 1rem; }
+  .sample-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: .25rem; margin-bottom: .75rem; }
+  .sample-id { font-weight: 700; }
+  .text { color: var(--muted); font-size: .95rem; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: .4rem .5rem; vertical-align: middle; }
+  td.label { width: 7.5rem; font-size: .85rem; color: var(--muted); white-space: nowrap; }
+  td.label.finetuned { color: var(--accent); font-weight: 600; }
+  audio { width: 100%; height: 2.2rem; }
+  .note { font-size: .85rem; color: var(--muted); text-align: center; margin-top: 1.5rem; }
+  .badge { display: inline-block; background: #e0e7ff; color: #3730a3; border-radius: 999px; padding: .1rem .6rem; font-size: .75rem; margin-left: .4rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🎙️ F5-TTS Child Voice Cloning</h1>
+    <p class="sub">
+      Fine-tuned F5-TTS v1 Base on ~14 min of Mandarin child speech ·
+      <a href="https://github.com/Ferrari-72/F5TTS-Child-Voice-Finetune">GitHub Repo</a>
+    </p>
+  </header>
+
+  <div id="samples"></div>
+
+  <p class="note">
+    Fine-tuned samples are from a 200-step validation checkpoint (pipeline verification run).<br>
+    SECS speaker similarity (vs. real): pretrained 0.526 · fine-tuned 0.526 — see repo README for the honest discussion.
+  </p>
+</div>
+
+<script>
+const samples = [
+  { id: "LF-0002", text: "你叫什么名字？" },
+  { id: "LF-0004", text: "你吃饭了吗？" },
+  { id: "YZ-0002", text: "你叫什么名字？" },
+  { id: "YZ-0003", text: "好久不见最近怎么样" },
+  { id: "YZ-0004", text: "你吃饭了吗？" },
+];
+const variants = [
+  { tag: "real",       label: "🧒 真实录音" },
+  { tag: "pretrained", label: "预训练（zero-shot）" },
+  { tag: "finetuned",  label: "✨ 微调后", highlight: true },
+];
+
+const root = document.getElementById("samples");
+for (const s of samples) {
+  const card = document.createElement("div");
+  card.className = "card";
+  card.innerHTML = `
+    <div class="sample-head">
+      <span class="sample-id">${s.id}</span>
+      <span class="text">「${s.text}」</span>
+    </div>
+    <table>
+      ${variants.map(v => `
+        <tr>
+          <td class="label ${v.tag === "finetuned" ? "finetuned" : ""}">${v.label}</td>
+          <td><audio controls preload="none" src="demo/${s.id}_${v.tag}.wav"></audio></td>
+        </tr>`).join("")}
+    </table>`;
+  root.appendChild(card);
+}
+</script>
+</body>
+</html>
