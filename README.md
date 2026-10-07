@@ -1,5 +1,7 @@
 # F5-TTS Child Voice Fine-Tuning
 
+**[🎧 Listen to the demo](https://ferrari-72.github.io/F5TTS-Child-Voice-Finetune/)** — real vs. zero-shot vs. fine-tuned, inline players.
+
 Fine-tuning [F5-TTS](https://github.com/SWivid/F5-TTS) v1 Base to clone a **Mandarin child's voice**
 from only **~14 minutes of speech** (224 short clips), on a single **RTX 4060 Laptop (8 GB VRAM)**.
 
