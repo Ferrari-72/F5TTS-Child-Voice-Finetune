@@ -53,7 +53,8 @@ class Trainer:
         is_local_vocoder: bool = False,  # use local path vocoder
         local_vocoder_path: str = "",  # local vocoder path
         cfg_dict: dict = dict(),  # training config
-        
+        mixed_precision: str = "no",  # "no" | "fp16" | "bf16" (bf16 needs Ampere+; use fp16 on Kaggle P100/T4)
+
     ):
         ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
@@ -65,6 +66,7 @@ class Trainer:
             log_with=logger if logger == "wandb" else None,
             kwargs_handlers=[ddp_kwargs],
             gradient_accumulation_steps=grad_accumulation_steps,
+            mixed_precision=mixed_precision,
             **accelerate_kwargs,
         )
 
@@ -151,11 +153,13 @@ class Trainer:
         if self.is_main:
             checkpoint = dict(
                 model_state_dict=self.accelerator.get_state_dict(self.model),
-                optimizer_state_dict=self.optimizer.state_dict(),
                 ema_model_state_dict=self.ema_model.state_dict(),
-                scheduler_state_dict=self.scheduler.state_dict(),
                 update=update,
             )
+            if last:
+                # model_last.pt doubles as the resume checkpoint, so it keeps optimizer/scheduler state
+                checkpoint["optimizer_state_dict"] = self.optimizer.state_dict()
+                checkpoint["scheduler_state_dict"] = self.scheduler.state_dict()
             if not os.path.exists(self.checkpoint_path):
                 os.makedirs(self.checkpoint_path)
             if last:
@@ -181,9 +185,82 @@ class Trainer:
                         os.remove(os.path.join(self.checkpoint_path, oldest_checkpoint))
                         print(f"Removed old checkpoint: {oldest_checkpoint}")
 
-    # -------------------------- 关键修改：强制跳过所有checkpoint加载 --------------------------
+    # Loads the latest checkpoint from checkpoint_path: model_last.pt > newest model_N.pt > pretrained_*.
+    # The pretrained safetensors is copied into checkpoint_path by finetune_cli before training starts,
+    # so a fresh run initializes both the online model and the EMA from pretrained weights.
     def load_checkpoint(self):
-        return 0  # 直接返回0，不加载任何旧checkpoint，彻底规避属性冲突
+        if (
+            not exists(self.checkpoint_path)
+            or not os.path.exists(self.checkpoint_path)
+            or not any(filename.endswith((".pt", ".safetensors")) for filename in os.listdir(self.checkpoint_path))
+        ):
+            return 0
+
+        self.accelerator.wait_for_everyone()
+        if "model_last.pt" in os.listdir(self.checkpoint_path):
+            latest_checkpoint = "model_last.pt"
+        else:
+            all_checkpoints = [
+                f
+                for f in os.listdir(self.checkpoint_path)
+                if (f.startswith("model_") or f.startswith("pretrained_")) and f.endswith((".pt", ".safetensors"))
+            ]
+            training_checkpoints = [f for f in all_checkpoints if f.startswith("model_") and f != "model_last.pt"]
+            if training_checkpoints:
+                latest_checkpoint = sorted(
+                    training_checkpoints,
+                    key=lambda x: int("".join(filter(str.isdigit, x))),
+                )[-1]
+            else:
+                latest_checkpoint = next(f for f in all_checkpoints if f.startswith("pretrained_"))
+
+        print(f"Loading checkpoint: {latest_checkpoint}")
+
+        if latest_checkpoint.endswith(".safetensors"):  # always a pretrained checkpoint
+            from safetensors.torch import load_file
+
+            checkpoint = load_file(f"{self.checkpoint_path}/{latest_checkpoint}", device="cpu")
+            checkpoint = {"ema_model_state_dict": checkpoint}
+        elif latest_checkpoint.endswith(".pt"):
+            checkpoint = torch.load(
+                f"{self.checkpoint_path}/{latest_checkpoint}", weights_only=True, map_location="cpu"
+            )
+
+        # patch for backward compatibility, 305e3ea
+        for key in ["ema_model.mel_spec.mel_stft.mel_scale.fb", "ema_model.mel_stft.spectrogram.window"]:
+            if key in checkpoint["ema_model_state_dict"]:
+                del checkpoint["ema_model_state_dict"][key]
+
+        if self.is_main:
+            self.ema_model.load_state_dict(checkpoint["ema_model_state_dict"])
+
+        if "update" in checkpoint or "step" in checkpoint:
+            # resume from a training checkpoint
+            if "step" in checkpoint:
+                checkpoint["update"] = checkpoint["step"] // self.grad_accumulation_steps
+            for key in ["mel_spec.mel_stft.mel_scale.fb", "mel_spec.mel_stft.spectrogram.window"]:
+                if key in checkpoint["model_state_dict"]:
+                    del checkpoint["model_state_dict"][key]
+
+            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+            if "optimizer_state_dict" in checkpoint:  # periodic saves omit optimizer state
+                self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if self.scheduler and "scheduler_state_dict" in checkpoint:
+                self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            update = checkpoint["update"]
+        else:
+            # pretrained checkpoint: initialize online model from EMA weights
+            checkpoint["model_state_dict"] = {
+                k.replace("ema_model.", ""): v
+                for k, v in checkpoint["ema_model_state_dict"].items()
+                if k not in ["initted", "update", "step"]
+            }
+            self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
+            update = 0
+
+        del checkpoint
+        gc.collect()
+        return update
 
     def train(self, train_dataset: Dataset, num_workers=16, resumable_with_seed: int = None):
         if self.log_samples:

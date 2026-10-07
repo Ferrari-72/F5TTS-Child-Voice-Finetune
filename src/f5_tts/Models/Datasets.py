@@ -251,7 +251,7 @@ def load_dataset(
     # print("---------------------Loading dataset------------")
     # print("dataset_type:",dataset_type)
     if dataset_type == "CustomDataset":
-        rel_data_path = f"F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/data/{dataset_name}"
+        rel_data_path = f"data/{dataset_name}"
         # print('----------debug------',rel_data_path)
         if audio_type == "raw":
             try:

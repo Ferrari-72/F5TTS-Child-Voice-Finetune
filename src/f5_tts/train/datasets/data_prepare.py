@@ -172,19 +172,22 @@ def prepare_csv_wavs_dir(input_dir, num_workers=None):
     if not processed:
         raise RuntimeError("No valid audio files were processed!")
 
-    # Batch process text conversion
+    # Convert transcripts to pinyin token lists. The pretrained F5-TTS vocab is
+    # pinyin-syllable based, so raw Chinese text would be entirely out-of-vocab.
+    from src.f5_tts.Models.utils import convert_char_to_pinyin
+
     raw_texts = [item[1] for item in processed]
-    # converted_texts = batch_convert_texts(raw_texts, polyphone, batch_size=BATCH_SIZE)
+    converted_texts = convert_char_to_pinyin(raw_texts, polyphone=True)
 
     # Prepare final results
     sub_result = []
     durations = []
     vocab_set = set()
 
-    for (audio_path, _, duration), conv_text in zip(processed, raw_texts):
+    for (audio_path, _, duration), conv_text in zip(processed, converted_texts):
         sub_result.append({"audio_path": audio_path, "text": conv_text, "duration": duration})
         durations.append(duration)
-        vocab_set.update(list(conv_text))
+        vocab_set.update(conv_text)
 
     return sub_result, durations, vocab_set
 

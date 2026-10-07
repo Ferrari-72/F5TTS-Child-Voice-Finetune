@@ -192,3 +192,6 @@ wheel==0.44.0
 x-transformers==1.44.6
 xxhash==3.5.0
 yarl==1.18.3
+# speaker similarity (SECS) evaluation
+resemblyzer==0.1.4
+webrtcvad-wheels>=2.0.14

@@ -1,201 +1,139 @@
-# 🎙️ F5-TTS Child Voice Fine-Tuning
-### AIAA2205 Assignment 2 — Text-to-Speech Fine-Tuning
+# F5-TTS Child Voice Fine-Tuning
 
-> Fine-tune [F5-TTS](https://github.com/SWivid/F5-TTS) to clone a **child voice** and synthesize high-quality Mandarin Chinese speech.  
-> 基于 F5-TTS 的**儿童音色克隆**与中文语音合成项目。
+Fine-tuning [F5-TTS](https://github.com/SWivid/F5-TTS) v1 Base to clone a **Mandarin child's voice**
+from only **~14 minutes of speech** (224 short clips), on a single **RTX 4060 Laptop (8 GB VRAM)**.
 
----
-
-## 📋 Project Overview / 项目概述
+中文说明见各 `docs/*.md`（本文以英文为主）。
 
 | Item | Detail |
 |---|---|
-| Base Model | F5-TTS v1 Base (pretrained) |
-| Fine-tune Dataset | `child-tts` — 220 short Mandarin child speech recordings (~14 min) |
-| Language | Mandarin Chinese (普通话) |
-| Hardware | NVIDIA RTX 4060 Laptop (8 GB VRAM) |
-| Reference Audio | `data/child-tts/000018.wav` — "城里有好多游乐场，可好玩儿了！" |
+| Base model | F5-TTS v1 Base (DiT, 335M params) |
+| Dataset | `child-tts` — 224 Mandarin child-speech clips, ~14 min, single speaker |
+| Hardware | RTX 4060 Laptop, 8 GB VRAM |
+| Reference clip | `data/child-tts/000018.wav` — "城里有好多游乐场，可好玩儿了！" |
+| Metrics | PESQ / STOI / DNSMOS / SRMR (quality) + **SECS** (speaker similarity) |
 
-**Pipeline:**  
-`Data Preprocessing` → `Download Pretrained Model` → `Fine-tuning` → `Inference` → `Objective Evaluation`
+## The debugging story
 
----
+The first fine-tuned checkpoint produced pure noise. Root-cause analysis found **four stacked
+bugs**, each independently fatal (full write-up: [`docs/DEBUG_NOTES.md`](docs/DEBUG_NOTES.md)):
 
-## 🚀 Quick Start / 快速开始
+1. **Pretrained weights were never loaded** — `Trainer.load_checkpoint()` had been gutted to
+   `return 0`, so "fine-tuning" was actually training from random init on 14 minutes of data.
+2. **Vocab mismatch** — training used the auto-generated 464-char dataset vocab instead of the
+   pretrained 2545-token pinyin vocab, breaking the text embedding shape.
+3. **Missing pinyin conversion at data prep** — raw Chinese transcripts were stored in the Arrow
+   dataset; with the pinyin vocab every Chinese character maps to OOV (id 0), i.e. the model saw
+   empty text conditioning. The official pipeline converts to pinyin *before* writing the dataset.
+4. **An inverted "fix" doc** — `VOCAB_FIX.md` pointed inference scripts at the 464-char vocab,
+   which made even a correct checkpoint produce garbage (pinyin tokens are all OOV in a
+   Chinese-char vocab).
 
-### 1. Install Dependencies / 安装依赖
+After the fixes, a **1-epoch smoke test (100 steps)** already produces fully intelligible speech:
+Whisper ASR on the synthesized clip transcribes it back as exactly the target sentence
+(`今天天气很好，我们去公园玩吧！`). See `demo/smoke_test_100steps.wav`.
+
+## Quick start
 
 ```bash
+conda activate f5-tts          # Python 3.10+, torch + CUDA
 pip install -r requirements.txt
-python install_deps.py        # install evaluation packages
-conda install -c conda-forge ffmpeg -y   # required for audio loading
 ```
 
-### 2. Generate Speech (GUI Player) / 生成语音并播放
+The full pipeline lives in **`tts_finetuning_main.ipynb`** (5 steps). CLI summary:
 
 ```bash
-# Generate 5 sample audio files
-python generate_samples.py
+# 1. Data: pinyin-retokenize existing transcripts (no Whisper re-run)
+python src/f5_tts/train/datasets/retokenize_to_pinyin.py \
+    --src data/child-tts_processed --dst data/child-tts_pinyin --wav-dir data/child-tts
 
-# Open the interactive GUI player (click to play)
-python audio_player_gui.py
+# 2. Smoke test (~5 min) — verify vocab size, checkpoint loading, falling loss
+python -X utf8 src/f5_tts/train/finetune_cli.py \
+    --epochs 1 --batch_size_per_gpu 2 --save_per_updates 30 --last_per_updates 60
+
+# 3. Full training (the one real run)
+python -X utf8 src/f5_tts/train/finetune_cli.py \
+    --epochs 50 --batch_size_per_gpu 4 --learning_rate 1e-5 --scheduler cosine \
+    --save_per_updates 500 --last_per_updates 100 --keep_last_n_checkpoints -1
+
+# 4. Checkpoint selection: batch-infer + score each candidate
+python batch_inference.py         # synthesize held-out test set
+python evaluate_quality.py        # PESQ / STOI / DNSMOS / SRMR ...
+python evaluate_similarity.py     # SECS speaker similarity (pick by this first)
+
+# 5. Inference
+python speech_synthesis.py "今天天气很好，我们去公园玩吧！"   # CLI
+python app.py                                                 # Gradio web UI
 ```
 
-### 3. Generate Custom Speech / 自定义文本合成
+If you only get one training run, follow [`docs/TRAINING_RUNBOOK.md`](docs/TRAINING_RUNBOOK.md):
+smoke test first, keep all intermediate checkpoints, select by SECS + DNSMOS afterwards.
 
-```bash
-python speech_synthesis.py "今天天气很好，我们去公园玩吧！"
-```
+## Key settings
 
-### 4. Data Preprocessing / 数据预处理
-
-> ⚠️ Run only once — outputs are cached in `data/child-tts_processed/`
-
-```bash
-python src/f5_tts/train/datasets/data_prepare.py \
-    ./data/child-tts ./data/child-tts_processed
-```
-
-### 5. Fine-tuning / 模型微调
-
-Open and run `tts_finetuning_main.ipynb` in Jupyter / Colab.
-
-> **⚠️ Important:** Use the pretrained model's vocab (`ckpts/child-tts/F5TTS_v1_Base/vocab.txt`, 2545 lines / ~9327 chars) for both training and inference. Do NOT replace it with the auto-generated dataset vocab.
-
-### 6. Batch Inference / 批量推理
-
-```bash
-python batch_inference.py
-```
-
-### 7. Quality Evaluation / 音频质量评估
-
-```bash
-python evaluate_quality.py
-```
-
----
-
-## 📁 Project Structure / 项目结构
-
-```
-.
-├── 📓 tts_finetuning_main.ipynb        Main fine-tuning notebook
-├── 📓 tts_finetuning_simplified.ipynb  Simplified version
-│
-├── 🐍 audio_player_gui.py              GUI player — click to play any audio
-├── 🐍 audio_player.py                  CLI audio player
-├── 🐍 generate_samples.py              Generate sample WAV files
-├── 🐍 speech_synthesis.py              Single-text TTS inference
-├── 🐍 batch_inference.py               Batch inference on test set
-├── 🐍 evaluate_quality.py              Multi-metric audio evaluation
-├── 🐍 hparam_search.py                 Hyperparameter search
-├── 🐍 quick_inference.py               Quick single-file inference test
-├── 🐍 install_deps.py                  Install evaluation dependencies
-├── 🐍 inspect_notebook.py              Notebook structure inspector
-│
-├── src/f5_tts/                         F5-TTS core source (submodule)
-│   ├── configs/                        Model configs (.yaml)
-│   ├── infer/                          Inference utilities & CLI
-│   ├── Models/                         DiT / UNetT / CFM model code
-│   └── train/                          Training scripts & data prep
-│
-├── data/
-│   ├── child-tts/                      Raw training WAVs (220 files)
-│   ├── child-tts_processed/            Preprocessed Arrow dataset
-│   └── test_data/                      Evaluation WAVs (LF / YZ series)
-│
-├── ckpts/
-│   ├── child-tts/
-│   │   ├── pretrained_model_1250000.safetensors   ← pretrained base
-│   │   └── F5TTS_v1_Base/vocab.txt                ← correct vocab (2545 tokens)
-│   └── child-tts_processed/
-│       └── model_last.pt              ← fine-tuned checkpoint
-│
-├── test_outputs/
-│   ├── quick_test/                     Single-run generated WAVs
-│   └── batch_inference/                Batch-run generated WAVs
-│
-├── speechscore/                        Speech quality evaluation toolkit
-├── docs/                               Extended documentation
-└── 图表/                               Analysis plots & charts
-```
-
----
-
-## 🎧 Audio Player / 音频播放器
-
-`audio_player_gui.py` — a dark-theme Tkinter GUI that automatically discovers all WAV files in the project.
-
-| Action | How |
-|---|---|
-| Play | Double-click a file **or** select + click ▶ Play |
-| Stop | Click ■ Stop |
-| Open folder | Click 📂 Open |
-| Refresh file list | Click 🔄 Refresh |
-
-```bash
-python audio_player_gui.py
-```
-
----
-
-## 📊 Evaluation Metrics / 评估指标
-
-| Metric | Range | Meaning |
+| Setting | Value | Note |
 |---|---|---|
-| PESQ | 1.0 – 4.5 | Perceptual speech quality |
-| STOI | 0.0 – 1.0 | Short-time objective intelligibility |
-| CSIG | 1.0 – 5.0 | Signal distortion |
-| CBAK | 1.0 – 5.0 | Background noise |
-| COVL | 1.0 – 5.0 | Overall quality |
-| DNSMOS | — | DNS challenge MOS score |
-| SRMR | — | Speech-to-reverberation modulation ratio |
+| tokenizer | `custom` + pretrained `vocab.txt` (2545 pinyin tokens) | never the dataset char vocab |
+| lr / schedule | 1e-5, cosine, auto warmup = 10% of total steps | official default 20k warmup > total steps |
+| batch | 4 samples (8 GB VRAM) | drop to 2 if OOM |
+| `nfe_step` / `cfg_strength` | 32–50 / 2.0 (quality runs: 150 / 3.0) | diffusion sampling steps / guidance |
 
----
+## Demo
 
-## ⚙️ Key Inference Parameters / 推理参数
+Real held-out recordings vs. zero-shot pretrained vs. fine-tuned (same text, same reference clip).
+Click a file on GitHub to listen.
 
-| Parameter | Recommended | Description |
-|---|---|---|
-| `nfe_step` | 32 – 50 | Diffusion denoising steps (higher = better quality, slower) |
-| `cfg_strength` | 2.0 | Classifier-free guidance (higher = more faithful to reference) |
-| `ref_audio` | `000018.wav` | Voice-cloning reference audio |
-| `vocab_file` | `ckpts/child-tts/F5TTS_v1_Base/vocab.txt` | **Must** use pretrained vocab |
+| Sample | Text | Real | Pretrained (zero-shot) | Fine-tuned |
+|---|---|---|---|---|
+| LF-0002 | 你叫什么名字？ | [▶](demo/LF-0002_real.wav) | [▶](demo/LF-0002_pretrained.wav) | [▶](demo/LF-0002_finetuned.wav) |
+| LF-0004 | 你吃饭了吗？ | [▶](demo/LF-0004_real.wav) | [▶](demo/LF-0004_pretrained.wav) | [▶](demo/LF-0004_finetuned.wav) |
+| YZ-0002 | 你叫什么名字？ | [▶](demo/YZ-0002_real.wav) | [▶](demo/YZ-0002_pretrained.wav) | [▶](demo/YZ-0002_finetuned.wav) |
+| YZ-0003 | 好久不见最近怎么样 | [▶](demo/YZ-0003_real.wav) | [▶](demo/YZ-0003_pretrained.wav) | [▶](demo/YZ-0003_finetuned.wav) |
+| YZ-0004 | 你吃饭了吗？ | [▶](demo/YZ-0004_real.wav) | [▶](demo/YZ-0004_pretrained.wav) | [▶](demo/YZ-0004_finetuned.wav) |
 
----
+> The current fine-tuned demo comes from a **200-step validation run** (the smoke-test checkpoint)
+> whose purpose is proving the fixed pipeline end-to-end. Full training is a single command —
+> see [`docs/TRAINING_RUNBOOK.md`](docs/TRAINING_RUNBOOK.md).
 
-## 🐛 Known Issues / 已知问题
+## Evaluation
 
-### Fine-tuned model generates noise
-The current `model_last.pt` outputs near-silence noise instead of speech.  
-**Root cause:** The fine-tuning run used the auto-generated dataset vocab (464 tokens) instead of the pretrained model vocab (2545 tokens), causing the text embedding to diverge.  
-**Workaround:** Use `pretrained_model_1250000.safetensors` for inference (works correctly).  
-**Fix:** Re-run fine-tuning with `vocab_file = ckpts/child-tts/F5TTS_v1_Base/vocab.txt`.
+Speaker similarity (SECS, resemblyzer cosine vs. the real recording), measured on the 5 demo pairs:
 
----
-
-## 📚 Documentation / 文档
-
-See `docs/` for detailed write-ups:
-
-| File | Content |
+| Model | SECS (mean) |
 |---|---|
-| `SCORE_OPTIMIZATION_METHODS.md` | How to maximize evaluation scores |
-| `OPTIMIZATION_SUMMARY.md` | Parameter optimization results |
-| `BATCH_EVALUATION.md` | Batch evaluation guide |
-| `PROJECT_SUMMARY.md` | Full project summary |
-| `IMPROVEMENTS_SUMMARY.md` | Code improvement log |
+| Pretrained (zero-shot) | 0.526 |
+| Fine-tuned (200-step validation ckpt) | 0.526 |
 
----
+Honest reading: at 200 warmup-phase steps the fine-tuned model has not yet moved past the
+(zero-shot) baseline on speaker similarity — the numbers validate the *pipeline*, not the final
+quality. Full-run results (PESQ / STOI / DNSMOS / SECS across intermediate checkpoints) get
+filled in after the complete training run.
 
-## 🙏 Acknowledgements / 致谢
+## Project structure
+
+```
+├── tts_finetuning_main.ipynb   # the whole pipeline, 5 steps
+├── app.py                      # Gradio web demo
+├── speech_synthesis.py         # single-text CLI inference
+├── batch_inference.py          # batch inference on the test set (resumable)
+├── evaluate_quality.py         # PESQ/STOI/DNSMOS/SRMR ...
+├── evaluate_similarity.py      # SECS speaker similarity
+├── hparam_search.py            # nfe_step / cfg_strength search
+├── src/f5_tts/                 # F5-TTS source (training fixes live here)
+├── docs/
+│   ├── TRAINING_RUNBOOK.md     # one-shot training checklist (中文)
+│   └── DEBUG_NOTES.md          # the four-bug postmortem (中文)
+├── data/                       # wavs + Arrow datasets (gitignored)
+├── ckpts/                      # pretrained + fine-tuned checkpoints (gitignored)
+└── demo/                       # sample outputs
+```
+
+## Acknowledgements
 
 - [F5-TTS](https://github.com/SWivid/F5-TTS) — base model & architecture
-- [SpeechScore](https://github.com/auspicious3000/SpeechScore) — evaluation toolkit
+- [SpeechScore](https://github.com/auspicious3000/SpeechScore) — quality metrics
+- [resemblyzer](https://github.com/resemble-ai/Resemblyzer) — speaker encoder for SECS
 
----
+## License
 
-## 📝 License
-
-See [LICENSE](LICENSE).
+[MIT](LICENSE)

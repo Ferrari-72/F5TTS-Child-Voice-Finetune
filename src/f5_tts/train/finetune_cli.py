@@ -1,7 +1,9 @@
 import argparse
 import os
 import sys
-sys.path.append('F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/')
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[3]))  # repo root
 import shutil
 from importlib.resources import files
 
@@ -37,9 +39,9 @@ def parse_args():
         choices=["F5TTS_v1_Base", "F5TTS_Base", "E2TTS_Base"],
         help="Experiment name",
     )
-    parser.add_argument("--dataset_name", type=str, default="child-tts_processed", help="Name of the dataset to use")
+    parser.add_argument("--dataset_name", type=str, default="child-tts_pinyin", help="Name of the dataset folder under data/ (text must be pinyin-tokenized)")
     parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for training")
-    parser.add_argument("--batch_size_per_gpu", type=int, default=2, help="Batch size per GPU")
+    parser.add_argument("--batch_size_per_gpu", type=int, default=4, help="Batch size per GPU (samples)")
     parser.add_argument(
         "--batch_size_type", type=str, default="sample", choices=["frame", "sample"], help="Batch size type"
     )
@@ -56,7 +58,7 @@ def parse_args():
     parser.add_argument(
         "--keep_last_n_checkpoints",
         type=int,
-        default=0,
+        default=-1,
         help="-1 to keep all, 0 to not save intermediate, > 0 to keep last N checkpoints",
     )
     parser.add_argument("--last_per_updates", type=int, default=500, help="Save last checkpoint every N updates")
@@ -64,7 +66,7 @@ def parse_args():
 
     parser.add_argument(
         "--pretrain", type=str,
-        default='F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/ckpts/child-tts/pretrained_model_1250000.safetensors',
+        default='ckpts/child-tts/pretrained_model_1250000.safetensors',
         help="the path to pretrained checkpoint"
     )
     parser.add_argument(
@@ -73,8 +75,9 @@ def parse_args():
     parser.add_argument(
         "--tokenizer_path",
         type=str,
-        default='F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/ckpts/child-tts/vocab.txt',
-        help="Path to custom tokenizer vocab file (only used if tokenizer = 'custom')",
+        default='ckpts/child-tts/vocab.txt',
+        help="Path to custom tokenizer vocab file (only used if tokenizer = 'custom'). "
+             "Must be the PRETRAINED pinyin vocab (2545 tokens) when fine-tuning from F5TTS_v1_Base.",
     )
     parser.add_argument(
         "--log_samples",
@@ -90,6 +93,10 @@ def parse_args():
     parser.add_argument(
         "--scheduler", type=str, default="cosine", choices=["linear", "cosine"],
         help="LR scheduler type. cosine gives better convergence for fine-tuning small datasets."
+    )
+    parser.add_argument(
+        "--mixed_precision", type=str, default="no", choices=["no", "fp16", "bf16"],
+        help="Mixed precision training. bf16 for RTX 30/40 series (~2x speed, half VRAM); fp16 for Kaggle P100/T4."
     )
 
     return parser.parse_args()
@@ -243,6 +250,7 @@ def main():
         log_samples=args.log_samples,
         last_per_updates=args.last_per_updates,
         bnb_optimizer=args.bnb_optimizer,
+        mixed_precision=args.mixed_precision,
         vocab_size=vocab_size,
         mel_spec_type=mel_spec_type
     )
@@ -296,6 +304,11 @@ def main():
             trainer.optimizer, schedulers=[warmup_scheduler, decay_scheduler], milestones=[warmup_updates]
         )
         trainer.scheduler = trainer.accelerator.prepare(trainer.scheduler)
+
+        start_update = trainer.load_checkpoint()
+        if start_update > 0:
+            global_step = start_update
+            print(f"Resumed from checkpoint at update {start_update}")
 
         for epoch in range(trainer.epochs):
             epoch_loss = 0.0

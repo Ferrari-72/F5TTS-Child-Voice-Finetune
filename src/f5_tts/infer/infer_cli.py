@@ -7,7 +7,7 @@ from importlib.resources import files
 from pathlib import Path
 import sys
 
-sys.path.append('F:/AI-project/F5TTS/AIAA2205-assignment2-F5-TTS/')
+sys.path.append(str(Path(__file__).resolve().parents[3]))  # repo root
 import numpy as np
 import soundfile as sf
 import tomli

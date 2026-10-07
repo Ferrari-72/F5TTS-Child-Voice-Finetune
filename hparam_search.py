@@ -23,8 +23,8 @@ REF_TEXT = "城里有好多游乐场，可好玩儿了！"
 
 # 模型路径
 MODEL_CFG = ROOT_DIR / "src" / "f5_tts" / "configs" / "F5TTS_v1_Base.yaml"
-CKPT_FILE = ROOT_DIR / "ckpts" / "child-tts_processed" / "model_last.pt"
-VOCAB_FILE = ROOT_DIR / "data" / "child-tts_processed" / "vocab.txt"  # 使用中文vocab，不是预训练的英文vocab
+CKPT_FILE = ROOT_DIR / "ckpts" / "child-tts_pinyin" / "model_last.pt"
+VOCAB_FILE = ROOT_DIR / "ckpts" / "child-tts" / "vocab.txt"  # pretrained pinyin vocab (2545 tokens); the dataset-generated char vocab breaks pinyin tokenization
 
 OUTPUT_DIR = ROOT_DIR / "outputs" / "param_optimization"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

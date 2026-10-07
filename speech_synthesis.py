@@ -34,8 +34,8 @@ REF_TEXT = "城里有好多游乐场，可好玩儿了！"  # 参考音频的文
 
 # 模型路径（已修复vocab路径）
 MODEL_CFG = ROOT_DIR / "src" / "f5_tts" / "configs" / "F5TTS_v1_Base.yaml"
-CKPT_FILE = ROOT_DIR / "ckpts" / "child-tts_processed" / "model_last.pt"
-VOCAB_FILE = ROOT_DIR / "data" / "child-tts_processed" / "vocab.txt"  # ✅ 使用正确的中文vocab
+CKPT_FILE = ROOT_DIR / "ckpts" / "child-tts_pinyin" / "model_last.pt"
+VOCAB_FILE = ROOT_DIR / "ckpts" / "child-tts" / "vocab.txt"  # pretrained pinyin vocab (2545 tokens); the dataset-generated char vocab breaks pinyin tokenization
 
 # 优化的推理参数（高质量设置）
 NFE_STEP = 150  # 采样步数（高质量）
