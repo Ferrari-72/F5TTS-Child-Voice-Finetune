@@ -15,21 +15,56 @@ from only **~14 minutes of speech** (224 short clips), on a single **RTX 4060 La
 | Reference clip | `data/child-tts/000018.wav` — "城里有好多游乐场，可好玩儿了！" |
 | Metrics | PESQ / STOI / DNSMOS / SRMR (quality) + **SECS** (speaker similarity) |
 
+## Analysis: why this is hard, and where the work went
+
+**The setup is adversarial by construction.** A 335M-parameter diffusion transformer, ~14 minutes
+of single-speaker data, a budget of *one* real training run — and a training pipeline that had
+been silently broken in four places, so the naive "just run fine-tune" produces pure noise with
+no error message. Three numbers frame the whole project: **335M params / 14 min / 2500 steps**.
+
+### Failure → evidence → root cause (the actual debugging loop)
+
+Each bug was isolated by a falsifiable check, not by reading code top-to-bottom:
+
+| Symptom | Diagnostic check | Root cause | Fix |
+|---|---|---|---|
+| Output = white noise | Train 100 steps, listen: still noise → not undertraining | `load_checkpoint()` gutted to `return 0`; model trained from random init | Restore official loader (safetensors → EMA + online) |
+| Loss falls but output stays noise | Print vocab size at runtime: 464 ≠ 2545 | Dataset char vocab used with pretrained pinyin embeddings | Force pretrained `vocab.txt` everywhere |
+| Text conditioning has no effect | Decode token ids back: all zeros | Chinese chars never converted to pinyin → every char OOV (id 0) | Retokenize Arrow dataset to pinyin (`retokenize_to_pinyin.py`) |
+| "Fixed" checkpoint still garbage | Trace which vocab inference loads | `VOCAB_FIX.md` pointed inference at the wrong vocab | Delete the doc, pin correct vocab in scripts |
+
+Validation after the fix: a 100-step smoke test synthesized speech that **Whisper ASR transcribes
+back as exactly the target sentence** — a cheap, decisive end-to-end check before spending the
+one training run.
+
+### Design decisions worth noticing
+
+- **Warmup rescaled to the run, not copied from the paper.** Official default warmup (20k steps)
+  exceeds the entire run (2.5k steps) — LR would never leave warmup. Warmup set to 10% of total steps.
+- **Checkpoint selection by SECS, not by loss.** Flow-matching loss does not track perceptual
+  speaker similarity; every intermediate checkpoint was kept (`keep_last_n_checkpoints=-1`),
+  batch-synthesized, and scored with a speaker encoder afterwards.
+- **Honest metrics.** SECS parity with the zero-shot baseline (0.526 vs 0.526) is reported as-is,
+  with the noise caveats — see [Evaluation](#evaluation).
+- **One-shot discipline.** Smoke test → full run on free cloud GPU (Kaggle P100) → post-hoc
+  selection, so the single real run never gets wasted on a misconfiguration.
+
+### Workload at a glance
+
+| Area | What was actually done |
+|---|---|
+| Training core | Repaired `Trainer.load_checkpoint()`, added `--mixed_precision`, slim periodic saves (model+EMA only), resume priority fix |
+| Data | Built pinyin retokenizer that reuses existing transcripts (no Whisper re-run); rewrote audio paths |
+| Infra | Automated Kaggle pipeline (dataset upload, kernel script, 5 debug iterations on mount paths/CLI deprecations/missing deps); GitHub Pages demo site |
+| Evaluation | SECS harness (resemblyzer), quality-metrics integration (SpeechScore), ASR round-trip validation, checkpoint-selection sweep |
+| Product | Gradio UI (`app.py`), CLI inference, batch inference with resume, demo comparison set |
+
 ## The debugging story
 
-The first fine-tuned checkpoint produced pure noise. Root-cause analysis found **four stacked
-bugs**, each independently fatal (full write-up: [`docs/DEBUG_NOTES.md`](docs/DEBUG_NOTES.md)):
-
-1. **Pretrained weights were never loaded** — `Trainer.load_checkpoint()` had been gutted to
-   `return 0`, so "fine-tuning" was actually training from random init on 14 minutes of data.
-2. **Vocab mismatch** — training used the auto-generated 464-char dataset vocab instead of the
-   pretrained 2545-token pinyin vocab, breaking the text embedding shape.
-3. **Missing pinyin conversion at data prep** — raw Chinese transcripts were stored in the Arrow
-   dataset; with the pinyin vocab every Chinese character maps to OOV (id 0), i.e. the model saw
-   empty text conditioning. The official pipeline converts to pinyin *before* writing the dataset.
-4. **An inverted "fix" doc** — `VOCAB_FIX.md` pointed inference scripts at the 464-char vocab,
-   which made even a correct checkpoint produce garbage (pinyin tokens are all OOV in a
-   Chinese-char vocab).
+Full postmortem of the four stacked bugs summarized in the table above, with the forensic detail:
+[`docs/DEBUG_NOTES.md`](docs/DEBUG_NOTES.md) (中文). The short version: pretrained weights were
+never loaded, the vocab was mismatched, pinyin conversion was skipped at data prep, and a "fix"
+doc inverted the last one — each independently fatal, all silent.
 
 After the fixes, a **1-epoch smoke test (100 steps)** already produces fully intelligible speech:
 Whisper ASR on the synthesized clip transcribes it back as exactly the target sentence
