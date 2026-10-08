@@ -50,16 +50,23 @@ def main():
     if not test_files:
         raise SystemExit(f"no wavs in {TEST_DIR}")
 
-    import whisper
+    transcripts_path = DEMO_DIR / "transcripts.json"
+    if transcripts_path.exists():
+        transcripts = json.loads(transcripts_path.read_text(encoding="utf-8"))
+        print(f"Reusing {transcripts_path}")
+        for f in test_files:
+            shutil.copy(f, DEMO_DIR / f"{f.stem}_real.wav")
+    else:
+        import whisper
 
-    print("Loading Whisper (small)...")
-    asr = whisper.load_model("small")
-    transcripts = {}
-    for f in test_files:
-        text = asr.transcribe(str(f), language="zh")["text"].strip()
-        transcripts[f.stem] = text
-        print(f"{f.stem}: {text}")
-        shutil.copy(f, DEMO_DIR / f"{f.stem}_real.wav")
+        print("Loading Whisper (small)...")
+        asr = whisper.load_model("small")
+        transcripts = {}
+        for f in test_files:
+            text = asr.transcribe(str(f), language="zh")["text"].strip()
+            transcripts[f.stem] = text
+            print(f"{f.stem}: {text}")
+            shutil.copy(f, DEMO_DIR / f"{f.stem}_real.wav")
 
     print("Loading vocoder...")
     vocoder = load_vocoder(vocoder_name="vocos", is_local=False, local_path="")
